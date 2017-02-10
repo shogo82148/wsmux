@@ -66,7 +66,7 @@ func (m *Mux) DialContext(ctx context.Context, network, address string) (net.Con
 	case <-conn.accepted:
 		return conn, nil
 	case <-conn.rejected:
-		m.deleteConn(conn.id)
+		conn.close()
 		return nil, errors.New("wsmux: connection rejected")
 	case <-ctx.Done():
 		conn.Close()
@@ -162,4 +162,9 @@ func (m *Mux) handleReject(r io.Reader, connID uint64) {
 }
 
 func (m *Mux) handleClose(r io.Reader, connID uint64) {
+	conn := m.getConn(connID)
+	if conn == nil {
+		return // ignore invalid packet
+	}
+	conn.close()
 }

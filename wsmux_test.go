@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -79,5 +80,14 @@ func TestMux(t *testing.T) {
 	}
 	if cmux.getConn(sconn.(*Conn).id) == nil {
 		t.Error("dial faild")
+	}
+
+	err = sconn.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second) // wait for the peer
+	if cmux.getConn(sconn.(*Conn).id) != nil {
+		t.Error("close faild")
 	}
 }
