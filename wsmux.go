@@ -23,8 +23,9 @@ const (
 )
 
 type Mux struct {
-	wmu    sync.Mutex // Mutex for writing to the parent conn.
-	parent *websocket.Conn
+	// Conn is the parent connection of the multiplexer.
+	Conn *websocket.Conn
+	wmu  sync.Mutex // Mutex for writing to the parent conn.
 
 	mu     sync.RWMutex // Mutex for handling connection ids.
 	prevID uint64
@@ -34,26 +35,32 @@ type Mux struct {
 	listeners map[string]*Listener
 }
 
-func NewServer(parent *websocket.Conn) (*Mux, error) {
-	m := &Mux{
-		parent:    parent,
-		prevID:    0,
-		conns:     make(map[uint64]*Conn, 16),
-		listeners: make(map[string]*Listener),
-	}
-	go m.readLoop()
-	return m, nil
+func New(parent *websocket.Conn) *Mux {
+	return &Mux{Conn: parent}
 }
 
-func NewClient(parent *websocket.Conn) (*Mux, error) {
-	m := &Mux{
-		parent:    parent,
-		prevID:    1,
-		conns:     make(map[uint64]*Conn, 16),
-		listeners: make(map[string]*Listener),
+func (m *Mux) Server(parent *websocket.Conn) error {
+	if parent == nil && m.Conn == nil {
+		return errors.New("Mux.Conn is not set")
 	}
+	if parent != nil && m.Conn != nil {
+		return errors.New("Mux.Conn is already set")
+	}
+	m.prevID = 0
 	go m.readLoop()
-	return m, nil
+	return nil
+}
+
+func (m *Mux) Client(parent *websocket.Conn) error {
+	if parent == nil && m.Conn == nil {
+		return errors.New("Mux.Conn is not set")
+	}
+	if parent != nil && m.Conn != nil {
+		return errors.New("Mux.Conn is already set")
+	}
+	m.prevID = 1
+	go m.readLoop()
+	return nil
 }
 
 func (m *Mux) Dial(network, address string) (net.Conn, error) {
@@ -89,6 +96,9 @@ func (m *Mux) newConn(id uint64) *Conn {
 		accepted: make(chan struct{}, 1),
 		rejected: make(chan struct{}, 1),
 	}
+	if m.conns == nil {
+		m.conns = make(map[uint64]*Conn, 16)
+	}
 	m.conns[id] = conn
 	return conn
 }
@@ -120,6 +130,9 @@ func (m *Mux) Listen(network, address string) (net.Listener, error) {
 	if _, ok := m.listeners[address]; ok {
 		return nil, errors.New("address is already used")
 	}
+	if m.listeners == nil {
+		m.listeners = make(map[string]*Listener)
+	}
 	m.listeners[address] = l
 	return l, nil
 }
@@ -139,7 +152,7 @@ func (m *Mux) deleteListener(address string) {
 func (m *Mux) readLoop() {
 	buf := make([]byte, 9)
 	for {
-		t, r, err := m.parent.NextReader()
+		t, r, err := m.Conn.NextReader()
 		if err != nil {
 			break
 		}

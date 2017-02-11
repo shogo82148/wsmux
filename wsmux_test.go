@@ -1,6 +1,7 @@
 package wsmux
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -30,12 +31,7 @@ func newTestMux() (*Mux, *Mux, func(), error) {
 			log.Println(err)
 			return
 		}
-		mux, err := NewServer(conn)
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			log.Println(err)
-			return
-		}
+		mux := New(conn)
 		done := make(chan struct{}, 1)
 		select {
 		case chanMux <- serverMux{mux, done}:
@@ -54,11 +50,7 @@ func newTestMux() (*Mux, *Mux, func(), error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	mux, err := NewClient(conn)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
+	mux := New(conn)
 	smux := <-chanMux
 	cleanup := func() {
 		conn.Close()
@@ -68,15 +60,24 @@ func newTestMux() (*Mux, *Mux, func(), error) {
 }
 
 func TestReject(t *testing.T) {
-	smux, _, cleanup, err := newTestMux()
+	smux, cmux, cleanup, err := newTestMux()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
+	smux.Server(nil)
+	cmux.Client(nil)
 
-	_, err = smux.Dial("network", "address")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err = smux.DialContext(ctx, "network", "address")
 	if err == nil {
 		t.Error("want error, got not error")
+	}
+	select {
+	case <-ctx.Done():
+		t.Error("DialContext timeout")
+	default:
 	}
 }
 
@@ -97,6 +98,8 @@ func TestMux(t *testing.T) {
 			t.Fatal(err)
 		}
 	}()
+	smux.Server(nil)
+	cmux.Client(nil)
 
 	sconn, err := smux.Dial("network", "address")
 	if err != nil {

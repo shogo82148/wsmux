@@ -27,7 +27,7 @@ func (c *Conn) sendDial() error {
 	c.mux.wmu.Lock()
 	defer c.mux.wmu.Unlock()
 
-	w, err := c.mux.parent.NextWriter(websocket.BinaryMessage)
+	w, err := c.mux.Conn.NextWriter(websocket.BinaryMessage)
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,7 @@ func (c *Conn) sendAccept() error {
 	c.mux.wmu.Lock()
 	defer c.mux.wmu.Unlock()
 
-	w, err := c.mux.parent.NextWriter(websocket.BinaryMessage)
+	w, err := c.mux.Conn.NextWriter(websocket.BinaryMessage)
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func (c *Conn) sendReject() error {
 	c.mux.wmu.Lock()
 	defer c.mux.wmu.Unlock()
 
-	w, err := c.mux.parent.NextWriter(websocket.BinaryMessage)
+	w, err := c.mux.Conn.NextWriter(websocket.BinaryMessage)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (c *Conn) Close() error {
 	c.mux.wmu.Lock()
 	defer c.mux.wmu.Unlock()
 
-	w, err := c.mux.parent.NextWriter(websocket.BinaryMessage)
+	w, err := c.mux.Conn.NextWriter(websocket.BinaryMessage)
 	if err != nil {
 		return err
 	}
