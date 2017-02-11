@@ -67,6 +67,19 @@ func newTestMux() (*Mux, *Mux, func(), error) {
 	return smux.mux, mux, cleanup, nil
 }
 
+func TestReject(t *testing.T) {
+	smux, _, cleanup, err := newTestMux()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	_, err = smux.Dial("network", "address")
+	if err == nil {
+		t.Error("want error, got not error")
+	}
+}
+
 func TestMux(t *testing.T) {
 	smux, cmux, cleanup, err := newTestMux()
 	if err != nil {
@@ -74,20 +87,32 @@ func TestMux(t *testing.T) {
 	}
 	defer cleanup()
 
+	go func() {
+		l, err := cmux.Listen("wsmux", "address")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = l.Accept()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+
 	sconn, err := smux.Dial("network", "address")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cmux.getConn(sconn.(*Conn).id) == nil {
-		t.Error("dial faild")
-	}
+	id := sconn.(*Conn).id
 
 	err = sconn.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if smux.getConn(id) != nil {
+		t.Error("close faild")
+	}
 	time.Sleep(time.Second) // wait for the peer
-	if cmux.getConn(sconn.(*Conn).id) != nil {
+	if cmux.getConn(id) != nil {
 		t.Error("close faild")
 	}
 }
