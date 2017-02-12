@@ -140,7 +140,7 @@ func TestMux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if smux.getConn(id) != nil {
+	if _, ok := smux.conns[id]; ok {
 		t.Error("close faild")
 	}
 
@@ -150,7 +150,7 @@ func TestMux(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Error("timeout")
 	}
-	if cmux.getConn(id) != nil {
+	if _, ok := cmux.conns[id]; ok {
 		t.Error("close faild")
 	}
 }

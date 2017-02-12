@@ -110,12 +110,6 @@ func (m *Mux) newConn(id uint64) *Conn {
 	return conn
 }
 
-func (m *Mux) getConn(id uint64) *Conn {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.conns[id]
-}
-
 func (m *Mux) Listen(network, address string) (net.Listener, error) {
 	if network != "wsmux" {
 		return nil, errors.New("unknown network")
@@ -171,15 +165,18 @@ func (m *Mux) readLoop() {
 		connID := binary.BigEndian.Uint64(buf[1:])
 		switch packetType {
 		case PacketData:
-			m.handleData(r, connID)
+			err = m.handleData(r, connID)
 		case PacketDial:
-			m.handleDial(r, connID)
+			err = m.handleDial(r, connID)
 		case PacketAccept:
-			m.handleAccept(r, connID)
+			err = m.handleAccept(r, connID)
 		case PacketReject:
-			m.handleReject(r, connID)
+			err = m.handleReject(r, connID)
 		case PacketClose:
-			m.closeConn(connID)
+			err = m.closeConn(connID)
+		}
+		if err != nil {
+			break
 		}
 	}
 }
@@ -207,50 +204,71 @@ func (m *Mux) writePacket(packetType PacketType, connID uint64, b []byte) (int, 
 	return w.Write(b)
 }
 
-func (m *Mux) handleData(r io.Reader, connID uint64) {
-	conn := m.getConn(connID)
-	if conn == nil {
-		return // ignore invalid packet
+func (m *Mux) handleData(r io.Reader, connID uint64) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	conn, ok := m.conns[connID]
+	if !ok {
+		return nil
 	}
 	conn.chReader <- r
 	<-m.rdone
+	return nil
 }
 
-func (m *Mux) handleDial(r io.Reader, connID uint64) {
+func (m *Mux) handleDial(r io.Reader, connID uint64) (err error) {
 	l := m.getListener("address")
 	if l == nil {
-		m.writePacket(PacketReject, connID, nil)
+		_, err = m.writePacket(PacketReject, connID, nil)
 		return
 	}
 	conn := m.newConn(connID)
-	if err := l.receivedConn(conn); err != nil {
-		m.writePacket(PacketReject, connID, nil)
+	if err = l.receivedConn(conn); err != nil {
+		_, err = m.writePacket(PacketReject, connID, nil)
 		return
 	}
-	m.writePacket(PacketAccept, connID, nil)
+	_, err = m.writePacket(PacketAccept, connID, nil)
+	return
 }
 
-func (m *Mux) handleAccept(r io.Reader, connID uint64) {
-	conn := m.getConn(connID)
-	if conn == nil {
-		return // ignore invalid packet
+func (m *Mux) handleAccept(r io.Reader, connID uint64) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	conn, ok := m.conns[connID]
+	if !ok {
+		return nil
 	}
-	conn.accepted <- struct{}{}
-}
-
-func (m *Mux) handleReject(r io.Reader, connID uint64) {
-	conn := m.getConn(connID)
-	if conn == nil {
-		return // ignore invalid packet
+	select {
+	case conn.accepted <- struct{}{}:
+	default:
+		return errors.New("wsmux: duplicate accept packet")
 	}
-	conn.rejected <- struct{}{}
+	return nil
 }
 
-func (m *Mux) closeConn(connID uint64) {
+func (m *Mux) handleReject(r io.Reader, connID uint64) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	conn, ok := m.conns[connID]
+	if !ok {
+		return nil
+	}
+	select {
+	case conn.rejected <- struct{}{}:
+	default:
+		return errors.New("wsmux: duplicate accept packet")
+	}
+	return nil
+}
+
+func (m *Mux) closeConn(connID uint64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if conn, ok := m.conns[connID]; ok {
 		close(conn.closed)
 		delete(m.conns, connID)
 	}
+	return nil
 }
