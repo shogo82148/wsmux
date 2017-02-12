@@ -51,14 +51,7 @@ func (c *Conn) Close() error {
 	if err != nil {
 		return err
 	}
-	return c.close()
-}
-
-// close just closes the connection.
-// Use this if the peer known that the connection is closing now.
-func (c *Conn) close() error {
-	c.mux.deleteConn(c.id)
-	close(c.closed)
+	c.mux.closeConn(c.id)
 	return nil
 }
 

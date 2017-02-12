@@ -83,7 +83,7 @@ func (m *Mux) DialContext(ctx context.Context, network, address string) (net.Con
 	case <-conn.accepted:
 		return conn, nil
 	case <-conn.rejected:
-		conn.close()
+		m.closeConn(id)
 		return nil, errors.New("wsmux: connection rejected")
 	case <-ctx.Done():
 		conn.Close()
@@ -114,12 +114,6 @@ func (m *Mux) getConn(id uint64) *Conn {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.conns[id]
-}
-
-func (m *Mux) deleteConn(id uint64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.conns, id)
 }
 
 func (m *Mux) Listen(network, address string) (net.Listener, error) {
@@ -185,7 +179,7 @@ func (m *Mux) readLoop() {
 		case PacketReject:
 			m.handleReject(r, connID)
 		case PacketClose:
-			m.handleClose(r, connID)
+			m.closeConn(connID)
 		}
 	}
 }
@@ -252,10 +246,11 @@ func (m *Mux) handleReject(r io.Reader, connID uint64) {
 	conn.rejected <- struct{}{}
 }
 
-func (m *Mux) handleClose(r io.Reader, connID uint64) {
-	conn := m.getConn(connID)
-	if conn == nil {
-		return // ignore invalid packet
+func (m *Mux) closeConn(connID uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if conn, ok := m.conns[connID]; ok {
+		close(conn.closed)
+		delete(m.conns, connID)
 	}
-	conn.close()
 }
