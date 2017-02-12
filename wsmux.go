@@ -74,7 +74,13 @@ func (m *Mux) Dial(network, address string) (net.Conn, error) {
 func (m *Mux) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	id := atomic.AddUint64(&m.prevID, 2)
 	conn := m.newConn(id)
-	_, err := m.writePacket(PacketDial, id, nil)
+	if len(address) >= 256 {
+		return nil, errors.New("wsmux: too long address")
+	}
+	buf := make([]byte, 0, len(address)+1)
+	buf = append(buf, byte(len(address)))
+	buf = append(buf, address...)
+	_, err := m.writePacket(PacketDial, id, buf)
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +119,9 @@ func (m *Mux) newConn(id uint64) *Conn {
 func (m *Mux) Listen(network, address string) (net.Listener, error) {
 	if network != "wsmux" {
 		return nil, errors.New("unknown network")
+	}
+	if len(address) >= 256 {
+		return nil, errors.New("wsmux: too long address")
 	}
 	l := &Listener{
 		mux:     m,
@@ -214,10 +223,23 @@ func (m *Mux) handleData(r io.Reader, connID uint64) error {
 }
 
 func (m *Mux) handleDial(r io.Reader, connID uint64) (err error) {
+	// read the address
+	var buf [255]byte
+	_, err = io.ReadFull(r, buf[:1])
+	if err != nil {
+		return
+	}
+	len := int(buf[0])
+	_, err = io.ReadFull(r, buf[:len])
+	if err != nil {
+		return
+	}
+	address := string(buf[:len])
+
+	// find the listener
 	m.lmu.RLock()
 	defer m.lmu.RUnlock()
-
-	l, ok := m.listeners["address"] // TODO: read the address from r
+	l, ok := m.listeners[address]
 	if !ok {
 		_, err = m.writePacket(PacketReject, connID, nil)
 		return
