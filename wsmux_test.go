@@ -90,11 +90,11 @@ func TestMux(t *testing.T) {
 	defer cleanup()
 
 	done := make(chan struct{}, 1)
+	l, err := cmux.Listen("wsmux", "address")
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() {
-		l, err := cmux.Listen("wsmux", "address")
-		if err != nil {
-			t.Fatal(err)
-		}
 		cconn, err := l.Accept()
 		if err != nil {
 			t.Fatal(err)
