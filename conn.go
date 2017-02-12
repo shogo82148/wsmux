@@ -14,23 +14,22 @@ type Conn struct {
 	rejected chan struct{}
 	closed   chan struct{}
 	chReader chan io.Reader
-	reader   io.Reader
 }
 
 func (c *Conn) Read(b []byte) (n int, err error) {
 	for n == 0 && err == nil {
-		r := c.reader
-		if r == nil {
-			select {
-			case r = <-c.chReader:
-				c.reader = r
-			case <-c.closed:
-				return 0, io.EOF
-			}
+		var r io.Reader
+		select {
+		case r = <-c.chReader:
+		case <-c.closed:
+			return 0, io.EOF
 		}
 		n, err = r.Read(b)
-		if err != nil {
-			c.reader = nil
+		if err == nil {
+			// There can be at most one open reader in chReader.
+			// So, it will not block.
+			c.chReader <- r
+		} else {
 			c.mux.rdone <- struct{}{}
 		}
 		if err == io.EOF {

@@ -212,12 +212,18 @@ func (m *Mux) writePacket(packetType PacketType, connID uint64, b []byte) (int, 
 
 func (m *Mux) handleData(r io.Reader, connID uint64) error {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	conn, ok := m.conns[connID]
 	if !ok {
+		m.mu.RUnlock()
 		return nil
 	}
-	conn.chReader <- r
+	select {
+	case conn.chReader <- r:
+		m.mu.RUnlock()
+	default:
+		m.mu.RUnlock()
+		return errors.New("wsmux: unexpected parallel read")
+	}
 	<-m.rdone
 	return nil
 }
@@ -291,6 +297,11 @@ func (m *Mux) closeConn(connID uint64) error {
 	if conn, ok := m.conns[connID]; ok {
 		close(conn.closed)
 		delete(m.conns, connID)
+		select {
+		case <-conn.chReader:
+			m.rdone <- struct{}{}
+		default:
+		}
 	}
 	return nil
 }
