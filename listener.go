@@ -22,8 +22,7 @@ func (l *Listener) Accept() (net.Conn, error) {
 }
 
 func (l *Listener) Close() error {
-	l.mux.deleteListener(l.address)
-	close(l.closed)
+	l.mux.closeListener(l.address)
 	return nil
 }
 

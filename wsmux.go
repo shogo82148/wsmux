@@ -132,16 +132,13 @@ func (m *Mux) Listen(network, address string) (net.Listener, error) {
 	return l, nil
 }
 
-func (m *Mux) getListener(address string) *Listener {
-	m.lmu.RLock()
-	defer m.lmu.RUnlock()
-	return m.listeners[address]
-}
-
-func (m *Mux) deleteListener(address string) {
+func (m *Mux) closeListener(address string) {
 	m.lmu.Lock()
 	defer m.lmu.Unlock()
-	delete(m.listeners, address)
+	if l, ok := m.listeners[address]; ok {
+		close(l.closed)
+		delete(m.listeners, address)
+	}
 }
 
 func (m *Mux) readLoop() {
@@ -217,8 +214,11 @@ func (m *Mux) handleData(r io.Reader, connID uint64) error {
 }
 
 func (m *Mux) handleDial(r io.Reader, connID uint64) (err error) {
-	l := m.getListener("address")
-	if l == nil {
+	m.lmu.RLock()
+	defer m.lmu.RUnlock()
+
+	l, ok := m.listeners["address"] // TODO: read the address from r
+	if !ok {
 		_, err = m.writePacket(PacketReject, connID, nil)
 		return
 	}
