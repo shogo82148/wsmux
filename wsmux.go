@@ -33,6 +33,10 @@ type Mux struct {
 
 	lmu       sync.RWMutex // Mutex for listeners
 	listeners map[string]*Listener
+	buf       [9]byte
+
+	// rdone notifies child readers reach EOF
+	rdone chan struct{}
 }
 
 func New(parent *websocket.Conn) *Mux {
@@ -70,7 +74,8 @@ func (m *Mux) Dial(network, address string) (net.Conn, error) {
 func (m *Mux) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	id := atomic.AddUint64(&m.prevID, 2)
 	conn := m.newConn(id)
-	if err := conn.sendDial(); err != nil {
+	_, err := m.writePacket(PacketDial, id, nil)
+	if err != nil {
 		return nil, err
 	}
 
@@ -95,6 +100,8 @@ func (m *Mux) newConn(id uint64) *Conn {
 		mux:      m,
 		accepted: make(chan struct{}, 1),
 		rejected: make(chan struct{}, 1),
+		closed:   make(chan struct{}, 1),
+		chReader: make(chan io.Reader, 1),
 	}
 	if m.conns == nil {
 		m.conns = make(map[uint64]*Conn, 16)
@@ -151,6 +158,9 @@ func (m *Mux) deleteListener(address string) {
 
 func (m *Mux) readLoop() {
 	buf := make([]byte, 9)
+	if m.rdone == nil {
+		m.rdone = make(chan struct{}, 1)
+	}
 	for {
 		t, r, err := m.Conn.NextReader()
 		if err != nil {
@@ -180,22 +190,50 @@ func (m *Mux) readLoop() {
 	}
 }
 
+func (m *Mux) writePacket(packetType PacketType, connID uint64, b []byte) (int, error) {
+	m.wmu.Lock()
+	defer m.wmu.Unlock()
+
+	buf := m.buf[:]
+	buf[0] = byte(packetType)
+	binary.BigEndian.PutUint64(buf[1:], connID)
+
+	w, err := m.Conn.NextWriter(websocket.BinaryMessage)
+	if err != nil {
+		return 0, err
+	}
+	defer w.Close()
+	_, err = w.Write(buf)
+	if err != nil {
+		return 0, err
+	}
+	if b == nil {
+		return 0, nil
+	}
+	return w.Write(b)
+}
+
 func (m *Mux) handleData(r io.Reader, connID uint64) {
+	conn := m.getConn(connID)
+	if conn == nil {
+		return // ignore invalid packet
+	}
+	conn.chReader <- r
+	<-m.rdone
 }
 
 func (m *Mux) handleDial(r io.Reader, connID uint64) {
-	conn := m.newConn(connID)
-
 	l := m.getListener("address")
 	if l == nil {
-		conn.sendReject()
+		m.writePacket(PacketReject, connID, nil)
 		return
 	}
+	conn := m.newConn(connID)
 	if err := l.receivedConn(conn); err != nil {
-		conn.sendReject()
+		m.writePacket(PacketReject, connID, nil)
 		return
 	}
-	conn.sendAccept()
+	m.writePacket(PacketAccept, connID, nil)
 }
 
 func (m *Mux) handleAccept(r io.Reader, connID uint64) {

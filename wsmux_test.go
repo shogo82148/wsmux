@@ -2,6 +2,7 @@ package wsmux
 
 import (
 	"context"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -88,15 +89,36 @@ func TestMux(t *testing.T) {
 	}
 	defer cleanup()
 
+	done := make(chan struct{}, 1)
 	go func() {
 		l, err := cmux.Listen("wsmux", "address")
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = l.Accept()
+		cconn, err := l.Accept()
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		var buf [5]byte
+		n, err := io.ReadFull(cconn, buf[:])
+		if err != nil {
+			t.Error(err)
+		}
+		if n != 5 {
+			t.Errorf("want 5, got %d", n)
+		}
+		if string(buf[:n]) != "Hello" {
+			t.Errorf("want Hello, got %s", string(buf[:n]))
+		}
+		n, err = cconn.Read(buf[:])
+		if err != io.EOF {
+			t.Errorf("want io.EOF, got %v", err)
+		}
+		if n != 0 {
+			t.Errorf("want 0, got %d", n)
+		}
+		done <- struct{}{}
 	}()
 	smux.Server(nil)
 	cmux.Client(nil)
@@ -106,6 +128,13 @@ func TestMux(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := sconn.(*Conn).id
+	n, err := sconn.Write([]byte("Hello"))
+	if err != nil {
+		t.Error(err)
+	}
+	if n != 5 {
+		t.Errorf("want 5, got %d", n)
+	}
 
 	err = sconn.Close()
 	if err != nil {
@@ -114,7 +143,13 @@ func TestMux(t *testing.T) {
 	if smux.getConn(id) != nil {
 		t.Error("close faild")
 	}
-	time.Sleep(time.Second) // wait for the peer
+
+	// wait for the peer
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("timeout")
+	}
 	if cmux.getConn(id) != nil {
 		t.Error("close faild")
 	}
