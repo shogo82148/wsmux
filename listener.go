@@ -15,6 +15,7 @@ type Listener struct {
 func (l *Listener) Accept() (net.Conn, error) {
 	select {
 	case conn := <-l.chConn:
+		<-conn.accepted
 		return conn, nil
 	case <-l.closed:
 		return nil, errors.New("listener closed")

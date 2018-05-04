@@ -3,7 +3,7 @@ package wsmux
 import (
 	"context"
 	"io"
-	"log"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,7 +29,6 @@ func newTestMux() (*Mux, *Mux, func(), error) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
-			log.Println(err)
 			return
 		}
 		mux := New(conn)
@@ -153,4 +152,85 @@ func TestMux(t *testing.T) {
 	if _, ok := cmux.conns[id]; ok {
 		t.Error("close faild")
 	}
+}
+
+func BenchmarkWrite(b *testing.B) {
+	smux, cmux, cleanup, err := newTestMux()
+	if err != nil {
+		panic(err)
+	}
+	defer cleanup()
+	l, err := cmux.Listen("wsmux", "address")
+	if err != nil {
+		panic(err)
+	}
+	go func() {
+		for {
+			cconn, err := l.Accept()
+			if err != nil {
+				panic(err)
+			}
+			go io.Copy(ioutil.Discard, cconn)
+		}
+	}()
+	smux.Server(nil)
+	cmux.Client(nil)
+
+	data := make([]byte, 64*1024)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		sconn, err := smux.Dial("network", "address")
+		if err != nil {
+			panic(err)
+		}
+		defer sconn.Close()
+		for pb.Next() {
+			sconn.Write(data)
+		}
+	})
+}
+
+func BenchmarkRead(b *testing.B) {
+	smux, cmux, cleanup, err := newTestMux()
+	if err != nil {
+		panic(err)
+	}
+	defer cleanup()
+	l, err := cmux.Listen("wsmux", "address")
+	if err != nil {
+		panic(err)
+	}
+	data := make([]byte, 64*1024)
+	go func() {
+		for {
+			cconn, err := l.Accept()
+			if err != nil {
+				panic(err)
+			}
+			time.Sleep(time.Second)
+			go func() {
+				for {
+					_, err := cconn.Write(data)
+					if err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	smux.Server(nil)
+	cmux.Client(nil)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		sconn, err := smux.Dial("network", "address")
+		if err != nil {
+			panic(err)
+		}
+		defer sconn.Close()
+		buf := make([]byte, 1024)
+		for pb.Next() {
+			sconn.Read(buf)
+		}
+	})
 }

@@ -22,6 +22,22 @@ const (
 	PacketClose
 )
 
+func (t PacketType) String() string {
+	switch t {
+	case PacketData:
+		return "Data"
+	case PacketDial:
+		return "Dial"
+	case PacketAccept:
+		return "Accept"
+	case PacketReject:
+		return "Reject"
+	case PacketClose:
+		return "Close"
+	}
+	return ""
+}
+
 type Mux struct {
 	// Conn is the parent connection of the multiplexer.
 	Conn *websocket.Conn
@@ -247,15 +263,18 @@ func (m *Mux) handleDial(r io.Reader, connID uint64) (err error) {
 	defer m.lmu.RUnlock()
 	l, ok := m.listeners[address]
 	if !ok {
+		// listener not found
 		_, err = m.writePacket(PacketReject, connID, nil)
+		return
+	}
+
+	// found!!
+	_, err = m.writePacket(PacketAccept, connID, nil)
+	if err != nil {
 		return
 	}
 	conn := m.newConn(connID)
-	if err = l.receivedConn(conn); err != nil {
-		_, err = m.writePacket(PacketReject, connID, nil)
-		return
-	}
-	_, err = m.writePacket(PacketAccept, connID, nil)
+	l.chConn <- conn
 	return
 }
 
